@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useRef, Fragment, useMemo, useEffect } from 'react';
 import get from 'lodash/get';
 import { makeTabPermanent, syncTabUid } from 'providers/ReduxStore/slices/tabs';
-import { saveRequest, saveCollectionRoot, saveFolderRoot, saveEnvironment, saveCollectionSettings, closeTabs, saveFile } from 'providers/ReduxStore/slices/collections/actions';
+import { saveRequest, saveFolderRoot, saveEnvironment, saveCollectionSettings, closeTabs, saveFile } from 'providers/ReduxStore/slices/collections/actions';
 import useKeybinding from 'hooks/useKeybinding';
 import useKeybindingDisplayText from 'hooks/useKeybindingDisplayText';
 import { deleteRequestDraft, deleteCollectionDraft, deleteFolderDraft, clearEnvironmentsDraft, addSaveTransientRequestModal } from 'providers/ReduxStore/slices/collections';
@@ -34,6 +34,8 @@ import MockResponseTab from 'components/MockServer/RequestTabs/MockResponseTab';
 import ConfirmApiSpecClose from './ConfirmApiSpecClose';
 import { findApiSpecByPathname, hasUnsavedApiSpecChanges } from 'utils/api-specs';
 import { clearApiSpecDraft, saveApiSpecTabDraft } from 'providers/ReduxStore/slices/apiSpec';
+import SaveRequestsModal from 'providers/App/ConfirmAppClose/SaveRequestsModal';
+import Portal from 'ui/Portal';
 import toast from 'react-hot-toast';
 
 const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUid, hasOverflow, setHasOverflow, dropdownContainerRef }) => {
@@ -134,6 +136,12 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
   };
 
   const handleRightClick = (event) => {
+    // Modals rendered by this tab live in a portal, so their React events still bubble here
+    // even though they are outside the tab's DOM node.
+    if (!event.currentTarget.contains(event.target)) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
     menuDropdownRef.current?.show();
@@ -320,7 +328,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
     } else if (tab.type === 'collection-settings') {
       dispatch(saveCollectionSettings(collection.uid));
     } else if (tab.type === 'api-spec') {
-      dispatch(saveApiSpecTabDraft(tab.uid)).catch(() => {});
+      dispatch(saveApiSpecTabDraft(tab.uid)).catch(() => { });
     } else if (item && item.uid) {
       if (hasChanges || isItemTransientRequest(item)) {
         if (item.type === 'js' || collection.fileMode) {
@@ -407,7 +415,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
               setShowConfirmCollectionClose(false);
             }}
             onSaveAndClose={() => {
-              dispatch(saveCollectionRoot(collection.uid))
+              dispatch(saveCollectionSettings(collection.uid))
                 .then(() => {
                   dispatch(closeTabs({
                     tabUids: [tab.uid]
@@ -557,7 +565,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
               dispatch(saveApiSpecTabDraft(tab.uid)).then(() => {
                 dispatch(closeTabs({ tabUids: [tab.uid] }));
                 setShowConfirmApiSpecClose(false);
-              }).catch(() => {});
+              }).catch(() => { });
             }}
           />
         )}
@@ -640,10 +648,11 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
   }
 
   return (
-    <StyledWrapper className="flex items-center justify-between tab-container px-2">
+    <StyledWrapper className="flex items-center justify-between tab-container px-2" onContextMenu={handleRightClick}>
       {showConfirmClose && (
         <ConfirmRequestClose
-          item={item}
+          name={item.name}
+          type="request"
           onCancel={() => setShowConfirmClose(false)}
           onCloseWithoutSave={() => {
             isWS && closeWsConnection(item.uid);
@@ -696,6 +705,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
           }
           dispatch(makeTabPermanent({ uid: tab.uid }));
         }}
+        data-testid="request-tab-label"
         onMouseDown={handleMouseDown}
         onMouseUp={(e) => {
           if (!hasChanges) return handleMouseUp(e);
@@ -755,6 +765,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
 
 function RequestTabMenu({ menuDropdownRef, tabLabelRef, collectionRequestTabs, tabIndex, isActive, showNewRequestShortcut, onNewRequest, collection, dispatch, dropdownContainerRef }) {
   const [showCloneRequestModal, setShowCloneRequestModal] = useState(false);
+  const [tabUidsToClose, setTabUidsToClose] = useState([]);
   const getKeybindingDisplayText = useKeybindingDisplayText();
 
   // Returns the tab-label's position for dropdown positioning.
@@ -807,45 +818,26 @@ function RequestTabMenu({ menuDropdownRef, tabLabelRef, collectionRequestTabs, t
     } catch (err) { }
   }
 
-  async function handleCloseMultipleTabs(tabs) {
-    const tabUidsToClose = [];
-
-    for (const tab of tabs) {
-      const item = findItemInCollection(collection, tab.uid);
-
-      try {
-        if (tab.type === 'api-spec') {
-          await dispatch(saveApiSpecTabDraft(tab.uid));
-        } else if (item && hasRequestChanges(item)) {
-          await dispatch(saveRequest(item.uid, collection.uid, true));
-        }
-      } catch (err) {
-        continue;
-      }
-
-      if (tab?.uid) {
-        tabUidsToClose.push(tab.uid);
-      }
-    }
-
-    if (tabUidsToClose.length > 0) {
-      dispatch(closeTabs({ tabUids: tabUidsToClose }));
+  function handleCloseMultipleTabs(tabs) {
+    const tabUids = tabs.map((tab) => tab.uid).filter(Boolean);
+    if (tabUids.length > 0) {
+      setTabUidsToClose(tabUids);
     }
   }
 
-  async function handleCloseOtherTabs() {
+  function handleCloseOtherTabs() {
     const otherTabs = collectionRequestTabs.filter((_, index) => index !== tabIndex);
-    await handleCloseMultipleTabs(otherTabs);
+    handleCloseMultipleTabs(otherTabs);
   }
 
-  async function handleCloseTabsToTheLeft() {
+  function handleCloseTabsToTheLeft() {
     const leftTabs = collectionRequestTabs.filter((_, index) => index < tabIndex);
-    await handleCloseMultipleTabs(leftTabs);
+    handleCloseMultipleTabs(leftTabs);
   }
 
-  async function handleCloseTabsToTheRight() {
+  function handleCloseTabsToTheRight() {
     const rightTabs = collectionRequestTabs.filter((_, index) => index > tabIndex);
-    await handleCloseMultipleTabs(rightTabs);
+    handleCloseMultipleTabs(rightTabs);
   }
 
   function handleCloseSavedTabs() {
@@ -855,8 +847,8 @@ function RequestTabMenu({ menuDropdownRef, tabLabelRef, collectionRequestTabs, t
     dispatch(closeTabs({ tabUids: savedTabIds }));
   }
 
-  async function handleCloseAllTabs() {
-    await handleCloseMultipleTabs(collectionRequestTabs);
+  function handleCloseAllTabs() {
+    handleCloseMultipleTabs(collectionRequestTabs);
   }
 
   const menuItems = useMemo(() => [
@@ -936,6 +928,16 @@ function RequestTabMenu({ menuDropdownRef, tabLabelRef, collectionRequestTabs, t
           collectionUid={collection.uid}
           onClose={() => setShowCloneRequestModal(false)}
         />
+      )}
+
+      {tabUidsToClose.length > 0 && (
+        <Portal>
+          <SaveRequestsModal
+            forceCloseTabs={true}
+            tabUidsToClose={tabUidsToClose}
+            onClose={() => setTabUidsToClose([])}
+          />
+        </Portal>
       )}
 
       {menuDropdown}
