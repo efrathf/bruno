@@ -74,7 +74,8 @@ function startElectron(port) {
     shell: true,
     env: {
       ...process.env,
-      BRUNO_DEV_PORT: port
+      BRUNO_DEV_PORT: port,
+      DISABLE_SINGLE_INSTANCE: 'true'
     }
   });
 

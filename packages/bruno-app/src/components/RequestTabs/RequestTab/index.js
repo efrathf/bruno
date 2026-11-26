@@ -9,7 +9,7 @@ import { clearGlobalEnvironmentDraft } from 'providers/ReduxStore/slices/global-
 import { saveGlobalEnvironment } from 'providers/ReduxStore/slices/global-environments';
 import { useTheme } from 'providers/Theme';
 import { useDispatch, useSelector } from 'react-redux';
-import { findItemInCollection, findItemInCollectionByPathname, hasRequestChanges, areItemsLoading, isItemTransientRequest } from 'utils/collections';
+import { findItemInCollection, findItemInCollectionByPathname, hasRequestChanges, areItemsLoading, isItemARequest, isItemTransientRequest } from 'utils/collections';
 import { resolveNewRequestTarget } from './resolveNewRequestTarget';
 import ConfirmRequestClose from './ConfirmRequestClose';
 import ConfirmCollectionClose from './ConfirmCollectionClose';
@@ -18,6 +18,7 @@ import ConfirmCloseEnvironment from 'components/Environments/ConfirmCloseEnviron
 import RequestTabNotFound from './RequestTabNotFound';
 import RequestTabLoading from './RequestTabLoading';
 import SpecialTab from './SpecialTab';
+import TabNameEditor from './TabNameEditor';
 import { IconAppWindow } from '@tabler/icons';
 import StyledWrapper from './StyledWrapper';
 import MenuDropdown from 'ui/MenuDropdown';
@@ -48,6 +49,7 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
   const [showConfirmGlobalEnvironmentClose, setShowConfirmGlobalEnvironmentClose] = useState(false);
   const [showConfirmApiSpecClose, setShowConfirmApiSpecClose] = useState(false);
   const [newRequestTarget, setNewRequestTarget] = useState(null);
+  const [isRenaming, setIsRenaming] = useState(false);
 
   const menuDropdownRef = useRef();
 
@@ -185,6 +187,11 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
   if (!folder && tab.type === 'folder-settings' && tab.pathname) {
     folder = findItemInCollectionByPathname(collection, tab.pathname);
   }
+
+  const handleTabNameDoubleClick = () => {
+    dispatch(makeTabPermanent({ uid: tab.uid }));
+    setIsRenaming(true);
+  };
 
   const handleCloseFolderSettings = (event) => {
     if (!folder?.draft) {
@@ -560,7 +567,14 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
             ? <RequestTabLoading handleCloseClick={handleCloseClick} name={tab.name} />
             : <RequestTabNotFound handleCloseClick={handleCloseClick} />
         ) : tab.type === 'folder-settings' ? (
-          <SpecialTab handleCloseClick={handleCloseFolderSettings} handleDoubleClick={() => dispatch(makeTabPermanent({ uid: tab.uid }))} type={tab.type} tabName={folder?.name} hasDraft={hasFolderDraft} />
+          <SpecialTab
+            handleCloseClick={handleCloseFolderSettings}
+            handleDoubleClick={handleTabNameDoubleClick}
+            type={tab.type}
+            tabName={folder.name}
+            hasDraft={hasFolderDraft}
+            nameEditor={isRenaming && <TabNameEditor item={folder} collectionUid={collection.uid} onDone={() => setIsRenaming(false)} />}
+          />
         ) : tab.type === 'collection-settings' ? (
           <SpecialTab handleCloseClick={handleCloseCollectionSettings} handleDoubleClick={() => dispatch(makeTabPermanent({ uid: tab.uid }))} type={tab.type} tabName={collection?.name} hasDraft={hasDraft} />
         ) : tab.type === 'environment-settings' ? (
@@ -676,7 +690,12 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
         ref={tabLabelRef}
         className={`flex items-baseline tab-label ${tab.preview ? 'italic' : ''}`}
         onContextMenu={handleRightClick}
-        onDoubleClick={() => dispatch(makeTabPermanent({ uid: tab.uid }))}
+        onDoubleClick={() => {
+          if (isItemARequest(item) && !isItemTransientRequest(item)) {
+            return handleTabNameDoubleClick();
+          }
+          dispatch(makeTabPermanent({ uid: tab.uid }));
+        }}
         onMouseDown={handleMouseDown}
         onMouseUp={(e) => {
           if (!hasChanges) return handleMouseUp(e);
@@ -697,9 +716,13 @@ const RequestTab = ({ tab, collection, tabIndex, collectionRequestTabs, folderUi
             {method}
           </span>
         )}
-        <span ref={tabNameRef} className="ml-1 tab-name" title={item.name}>
-          {item.name}
-        </span>
+        {isRenaming ? (
+          <TabNameEditor item={item} collectionUid={collection.uid} onDone={() => setIsRenaming(false)} />
+        ) : (
+          <span ref={tabNameRef} className="ml-1 tab-name" title={item.name}>
+            {item.name}
+          </span>
+        )}
         <RequestTabMenu
           menuDropdownRef={menuDropdownRef}
           tabLabelRef={tabLabelRef}
